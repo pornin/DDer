@@ -176,11 +176,19 @@ public class DDer {
 					+ " {" + ae.GetTime() + "} )");
 				return;
 			case AsnElt.SEQUENCE:
+				if (!ae.Constructed) {
+					throw new AsnException(
+						"Non-constructed SEQUENCE");
+				}
 				tw.Write("sequence");
 				ParseSubs(tw, depth, ae);
 				tw.Write(")");
 				return;
 			case AsnElt.SET:
+				if (!ae.Constructed) {
+					throw new AsnException(
+						"Non-constructed SET");
+				}
 				tw.Write("set");
 				ParseSubs(tw, depth, ae);
 				tw.Write(")");
@@ -229,14 +237,22 @@ public class DDer {
 		/*
 		 * First, try to decode the bytes as an encapsulated
 		 * DER object.
+		 *
+		 * We need to check that reencoding would properly
+		 * conserve the value: the decoder may accept some BER,
+		 * or string encoding variants, that would not be
+		 * reencoded identically.
 		 */
 		try {
 			AsnElt ae = AsnElt.Decode(buf, off, len);
-			StringWriter sw = new StringWriter();
-			Parse(sw, depth + 1, ae);
-			tw.WriteLine();
-			tw.Write(sw.ToString());
-			return;
+			byte[] buf2 = Reencode(ae);
+			if (Equals(buf, off, len, buf2, 0, buf2.Length)) {
+				StringWriter sw = new StringWriter();
+				Parse(sw, depth + 1, ae);
+				tw.WriteLine();
+				tw.Write(sw.ToString());
+				return;
+			}
 		} catch (Exception) {
 			/*
 			 * Not an encapsulated DER object.
@@ -314,6 +330,84 @@ public class DDer {
 		}
 		sb.Append('"');
 		return sb.ToString();
+	}
+
+	/*
+	 * Reencode() simulates a DDer+MDer action: it is used to check
+	 * that whatever we decode can be reencoded identically from its
+	 * string representation. This is needed for tentative decoding
+	 * as sub-objects.
+	 *
+	 * We cannot simply call ae.Encode() because the AsnElt object
+	 * will keep a copy of the encoded source, and use it. We thus
+	 * duplicate the whole structure, taking care to decode and
+	 * reencode values which could be subject to variants (e.g.
+	 * integers and strings).
+	 */
+	static byte[] Reencode(AsnElt ae)
+	{
+		return Duplicate(ae).Encode();
+	}
+
+	static AsnElt Duplicate(AsnElt ae)
+	{
+		if (ae.Constructed) {
+			int n = ae.Sub.Length;
+			AsnElt[] ss = new AsnElt[n];
+			for (int i = 0; i < n; i ++) {
+				ss[i] = Duplicate(ae.Sub[i]);
+			}
+			return AsnElt.Make(ae.TagClass, ae.TagValue, ss);
+		}
+
+		if (ae.TagClass == AsnElt.UNIVERSAL) {
+			switch (ae.TagValue) {
+			case AsnElt.BOOLEAN:
+				return ae.GetBoolean()
+					? AsnElt.BOOL_TRUE : AsnElt.BOOL_FALSE;
+
+			case AsnElt.INTEGER:
+				return AsnElt.MakeIntegerSigned(
+					ae.CopyValue());
+
+			case AsnElt.OBJECT_IDENTIFIER:
+				return AsnElt.MakeOID(ae.GetOID());
+
+			case AsnElt.NumericString:
+			case AsnElt.PrintableString:
+			case AsnElt.IA5String:
+			case AsnElt.TeletexString:
+			case AsnElt.UTF8String:
+			case AsnElt.BMPString:
+			case AsnElt.UniversalString:
+			case AsnElt.UTCTime:
+			case AsnElt.GeneralizedTime:
+				return AsnElt.MakeString(
+					ae.TagValue, ae.GetString());
+			}
+		}
+
+		/*
+		 * All other primitive types will be treated as blobs.
+		 * We still need to duplicate them in order to avoid
+		 * variants in tag/length encoding.
+		 */
+		return AsnElt.MakePrimitive(ae.TagClass,
+			ae.TagValue, ae.CopyValue());
+	}
+
+	static bool Equals(byte[] b1, int off1, int len1,
+		byte[] b2, int off2, int len2)
+	{
+		if (len1 != len2) {
+			return false;
+		}
+		for (int i = 0; i < len1; i ++) {
+			if (b1[off1 + i] != b2[off2 + i]) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/* obsolete

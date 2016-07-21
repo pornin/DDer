@@ -1795,6 +1795,38 @@ public class AsnElt {
 	}
 
 	/*
+	 * Create a new INTEGER value for the provided integer. The x[]
+	 * array uses _signed_ big-endian encoding.
+	 */
+	public static AsnElt MakeIntegerSigned(byte[] x)
+	{
+		int xLen = x.Length;
+		if (xLen == 0) {
+			throw new AsnException(
+				"Invalid signed integer (empty)");
+		}
+		int j = 0;
+		if (x[0] >= 0x80) {
+			while (j < (xLen - 1)
+				&& x[j] == 0xFF
+				&& x[j + 1] >= 0x80)
+			{
+				j ++;
+			}
+		} else {
+			while (j < (xLen - 1)
+				&& x[j] == 0x00
+				&& x[j + 1] < 0x80)
+			{
+				j ++;
+			}
+		}
+		byte[] v = new byte[xLen - j];
+		Array.Copy(x, j, v, 0, v.Length);
+		return MakePrimitiveInner(INTEGER, v);
+	}
+
+	/*
 	 * Create a BIT STRING from the provided value. The number of
 	 * "unused bits" is set to 0.
 	 */

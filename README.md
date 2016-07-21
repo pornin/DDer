@@ -93,15 +93,10 @@ Text format consists in tokens, with the following rules:
    matching closing brace "`}`". Such comments may nest and may extend
    over several lines. Comments are equivalent to whitespace.
 
-   As a special treatment, if a semicolon is present in such a comment,
-   then the end of the line is ignored, i.e. the opening and closing
-   braces after the semicolon are skipped. This allows "commenting out"
-   lines that already include semicolon-started comments.
-
-   In practice, since braces in string literals can impair comment
-   processing, brace-delimited comments are normally reserved for small
-   in-line comments. DDer uses them to include a human-readable decoding
-   of `UTCTime` / `GeneralizedTime` values.
+   Within a brace-comment, MDer counts opening and closing braces so
+   that comment nesting works; it still properly ignores braces that
+   appear as part of semicolon-comments and literal strings. Brace
+   comments can thus be used to "comment out" large chunks of data.
 
  - A _word_ is a sequence of characters taken among: uppercase ASCII
    letters, lowercase ASCII letters, digits, "`$`", "`_`", "`-`", "`+`",
@@ -267,6 +262,8 @@ The following object types are defined:
 
 ## Notes
 
+### Sub-Objects for Blobs
+
 When decoding a `BIT STRING` or `OCTET STRING`, DDer will check if the
 value is itself a valid DER-encoded object. If it is, then the
 "sub-object" syntax is used; otherwise, hexadecimal bytes are used. It
@@ -275,6 +272,15 @@ sub-object; e.g., if a 20-byte key identifier in a certificate
 (nominally a hash output) starts with bytes 0x04 0x12, then it will
 "look like" a DER-encoded `OCTET STRING` and will be decoded as such. In
 practice, this occurs very rarely.
+
+DDer takes care not to use a sub-object if MDer would not reencode the
+value exactly. Such things may happen because many encoding variants are
+accepted (e.g. endianness in character strings, minimality of integer
+values, BER indefinite lengths...) but not transcribed in the text
+output of DDer. If the output would not be reencoded exactly, then
+hexadecimal output is produced instead of a sub-object.
+
+### Checks on Strings
 
 DDer and MDer check that string contents match their respective types.
 Therefore, if you want to produce (for testing reasons) an "invalid"
@@ -287,6 +293,42 @@ produces a value with the tag for `PrintableString` (universal 19), but
 the contents include a "`&`" character which is not allowed in a
 `PrintableString`. When decoding it back, DDer will complain
 ("unexpected character U+0026 in string of type 19").
+
+### Tentative String Decoding
+
+If an `OCTET STRING` or a `BIT STRING` contains bytes that appear to be
+"plain ASCII" (all byte values are 9, 10, 13, or between 32 and 126,
+inclusive), then DDer assumes that the bytes may be an encoded ASCII
+string, and prints out the string contents as a string literal enclosed
+in a brace-delimited comment. This is done in addition to the normal
+hexadecimal printout for such values.
+
+This is used for instance with `GeneralName` structures, which are
+commonly encountered in certificates for encoding URL (the format for
+such an URL is an `IA5String` with a contextual tag override of value 6,
+so the fact that it is an `IA5String` is not known to DDer).
+
+### Date and Time Processing
+
+When decoding a time string (`UTCTime` or `GeneralizedTime`), DDer
+produces both the string contents as a string literal, and a human
+readable date and time in a brace-delimited comment. Note that a
+`DateTime` object is used internally, with the following consequences:
+
+ - The date is converted to UTC. Any time zone offset in the string is
+   processed and applied.
+ - In `GeneralizedTime` values, only up to three fractional digits are
+   read (i.e. millisecons); other digits are ignored.
+ - Year 0 is not supported (`DateTime` starts at year 1).
+ - The calendar is a "proleptic Gregorian calendar", which means that
+   the Gregorian rules, theoretically valid only from October 15th, 1589 AD
+   onwards, are retroactively applied to previous dates.
+
+All this only matters for the human-readable printout, which is a
+comment. The string literal still contains the complete string, as it
+was received.
+
+### Memory Allocation Behaviour
 
 When decoding, the underlying ASN.1 library copies the whole input
 buffer exactly once, then keeps references within that buffer. This

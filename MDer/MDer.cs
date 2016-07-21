@@ -96,6 +96,11 @@ public class MDer {
 				LowRead();
 				continue;
 			}
+
+			/*
+			 * Semicolon introduces a comment that spans to
+			 * the end of the current line.
+			 */
 			if (c == ';') {
 				do {
 					c = LowRead();
@@ -105,6 +110,13 @@ public class MDer {
 				} while (c != '\n');
 				continue;
 			}
+
+			/*
+			 * An opening brace starts a comment that stops
+			 * on the matching closing brace. We must take
+			 * care of nested semicolon-comments and string
+			 * literals: braces in those don't count.
+			 */
 			if (c == '{') {
 				LowRead();
 				int count = 1;
@@ -120,6 +132,23 @@ public class MDer {
 								return -1;
 							}
 						} while (c != '\n');
+						continue;
+					}
+					if (c == '"') {
+						bool lcwb = false;
+						for (;;) {
+							c = LowRead();
+							if (c < 0) {
+								return -1;
+							}
+							if (lcwb) {
+								lcwb = false;
+							} else if (c == '\\') {
+								lcwb = true;
+							} else if (c == '"') {
+								break;
+							}
+						}
 						continue;
 					}
 					if (c == '{') {
