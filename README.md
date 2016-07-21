@@ -323,6 +323,10 @@ readable date and time in a brace-delimited comment. Note that a
  - The calendar is a "proleptic Gregorian calendar", which means that
    the Gregorian rules, theoretically valid only from October 15th, 1589 AD
    onwards, are retroactively applied to previous dates.
+ - Leap seconds are ignored: if the second count is 60, it is internally
+   converted to 59. Not attempt is made to check if the leap second
+   really occurred, or even _might_ have occurred at that date, as per
+   UTC rules.
 
 All this only matters for the human-readable printout, which is a
 comment. The string literal still contains the complete string, as it
@@ -336,6 +340,57 @@ should make it immune to, or at least robust against, malformed inputs
 with extra-large announced lengths in headers: if a 20-byte object
 begins with a header that claims the value length to be one gigabyte,
 DDer will _not_ allocate a one-gigabyte array.
+
+### Accepted Variants
+
+DDer accepts as input a number of variants which are not strict DER,
+but are still unambiguous. These variants include the following:
+
+ - Non-minimal tag and length encoding: encodings that use more bytes than
+   the strict minimum are accepted.
+
+ - Indefinite lengths (BER) are accepted. Note that DDer does not
+   perform reassembly of parts for primitive values that were split
+   into chunks.
+
+ - Non-zero values for the value byte of a `BOOLEAN` are considered to
+   encode `TRUE` (in strict DER, only 0xFF may be used for `TRUE`).
+
+ - Non-minimal integer encodings: extra leading 0x00 (for nonnegative
+   integers) or 0xFF (for negative integers) are tolerated.
+
+ - Ignored bits in the last byte of a `BIT STRING` may have non-zero
+   value (strict DER mandates that these bits are set to zero).
+
+ - Non-minimal OID element encodings: each numerical element uses the "7E"
+   encoding (big-endian, 7 bits per byte) but extra leading bytes are
+   allowed.
+
+ - `UTF8String`, `BMPString` and `UniversalString` may use an explicit
+   BOM, which is removed upon decoding.
+
+ - Little-endian decoding is accepted for `BMPString` and
+   `UniversalString` if a BOM is included, and indicates such an
+   encoding (strict DER mandates big-endian with no BOM).
+
+ - When decoding `UTF8String` and `UniversalString`, surrogates are
+   accepted, and pairs will be internally reunited.
+
+### Numerical Limits
+
+DDer and MDer operate under the following constraints:
+
+ - The complete ASN.1 object must fit in RAM. Processing is not streamed.
+   Moreover, 32-bit integers are used for lengths, so total object length
+   may not exceed 2 gigabytes.
+
+ - Tag value must fit on a 32-bit signed integer.
+
+ - Individual OID components must fit on 64-bit signed integers.
+
+ - Dates must have year 1 to 9999. Year 0 is not supported.
+
+Values which exceed these limits are detected and trigger exceptions.
 
 ## Author
 
