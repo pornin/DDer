@@ -1865,7 +1865,7 @@ public class AsnElt {
 		tmp[0] = (byte)unusedBits;
 		Array.Copy(buf, off, tmp, 1, len);
 		if (len > 0) {
-			tmp[len - 1] &= (byte)(0xFF << unusedBits);
+			tmp[len] &= (byte)(0xFF << unusedBits);
 		}
 		return MakePrimitiveInner(BIT_STRING, tmp);
 	}
