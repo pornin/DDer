@@ -3,6 +3,10 @@ using System.IO;
 
 namespace Asn1 {
 
+/*
+ * An AsnException is thrown for any decoding error.
+ */
+
 public class AsnException : IOException {
 
 	public AsnException(string message)

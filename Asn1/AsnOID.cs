@@ -2,7 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
+using BigInt;
+
 namespace Asn1 {
+
+/*
+ * Helper functions to handle object identifiers (OIDs).
+ */
 
 public class AsnOID {
 
@@ -246,14 +252,29 @@ public class AsnOID {
 		return sb.ToString();
 	}
 
+	/*
+	 * For an input OID, find the matching symbolic name. The source
+	 * string is returned if the OID is not one of the well-known OIDs
+	 * recorded in this class.
+	 */
 	public static string ToName(string oid)
 	{
 		return OIDToName.ContainsKey(oid) ? OIDToName[oid] : oid;
 	}
 
+	/*
+	 * Convert the input string to an OID in numeric format. The input
+	 * string may be either a symbolic name for a well-known OID, or
+	 * already an OID in valid numeric format; if it is neither, then
+	 * an AsnException is thrown.
+	 *
+	 * The returned OID is in canonical numeric format (i.e. integer
+	 * components have minimal length decimal representation).
+	 */
 	public static string ToOID(string name)
 	{
 		if (IsNumericOID(name)) {
+			name = ToCanonical(name);
 			return name;
 		}
 		string nn = Normalize(name);
@@ -264,7 +285,23 @@ public class AsnOID {
 		return NameToOID[nn];
 	}
 
+	/*
+	 * Return true if the input string is an OID in numeric format.
+	 * This function tolerates non-canonical formats (i.e. extra leading
+	 * zeros in components).
+	 */
 	public static bool IsNumericOID(string oid)
+	{
+		return IsNumericOID(oid, false);
+	}
+
+	/*
+	 * Return true if the input string is an OID in numeric format.
+	 * If 'strict' is true, then only a canonical format is accepted
+	 * (i.e. each numeric component must be either a single '0', or
+	 * a decimal integer that does not start with a '0').
+	 */
+	public static bool IsNumericOID(string oid, bool strict)
 	{
 		/*
 		 * An OID is in numeric format if:
@@ -284,10 +321,161 @@ public class AsnOID {
 		if (oid.IndexOf("..") >= 0) {
 			return false;
 		}
-		if (oid.IndexOf('.') < 0) {
+		int j = oid.IndexOf('.');
+		if (j < 0) {
 			return false;
 		}
+
+		/*
+		 * Enforce canonical format (if requested).
+		 * We reject the string if it contains ".0" followed by
+		 * a character other than '.', or starts with a '0' not
+		 * followed by '.'.
+		 */
+		if (strict) {
+			if (oid[0] == '0' && oid[1] != '.') {
+				return false;
+			}
+			int p = 0;
+			for (;;) {
+				int q = oid.IndexOf(".0", p);
+				if (q < 0) {
+					break;
+				}
+				p = q + 2;
+				if (p < oid.Length && oid[p] != '.') {
+					return false;
+				}
+			}
+		}
+
+		/*
+		 * Additionally, the OID elements must comply with some
+		 * limits:
+		 * -- first element must be 0, 1 or 2;
+		 * -- second element must be in the 0..39 range if the
+		 *    first element is 0 or 1.
+		 */
+		ZInt e1;
+		if (j == 1) {
+			e1 = (int)oid[0] - '0';
+		} else {
+			e1 = ZInt.Parse(oid.Substring(0, j));
+		}
+		if (e1 > 2) {
+			return false;
+		}
+		j ++;
+		if (e1 <= 1) {
+			int k = oid.IndexOf('.', j);
+			if (k < 0) {
+				k = oid.Length;
+			}
+			ZInt e2;
+			if (k == j + 1) {
+				e2 = (int)oid[j] - '0';
+			} else if (k == j + 2) {
+				e2 = 10 * ((int)oid[j] - '0')
+					+ ((int)oid[j + 1] - '0');
+			} else {
+				e2 = ZInt.Parse(oid.Substring(j, k - j));
+			}
+			if (e2 >= 40) {
+				return false;
+			}
+		}
+
 		return true;
+	}
+
+	/*
+	 * Get the canonical representation of a numeric OID. This
+	 * function assumes that the source string has already been
+	 * verified to be in valid numerical format; i.e. only removal
+	 * of spurious leading zeros in elements is needed.
+	 */
+	static string ToCanonical(string oid)
+	{
+		// Check if the source string is already canonical (this
+		// is the most common case).
+		bool canon = true;
+		if (oid[0] == '0' && oid[1] != '.') {
+			canon = false;
+		} else {
+			int p = 0;
+			for (;;) {
+				int q = oid.IndexOf(".0", p);
+				if (q < 0) {
+					break;
+				}
+				p = q + 2;
+				if (p < oid.Length && oid[p] != '.') {
+					canon = false;
+					break;
+				}
+			}
+		}
+		if (canon) {
+			return oid;
+		}
+
+		// Extract the individual components and normalize each.
+		StringBuilder sb = new StringBuilder();
+		int j = 0;
+		for (;;) {
+			if (j >= oid.Length) {
+				break;
+			}
+			int k = oid.IndexOf('.', j);
+			if (k < 0) {
+				k = oid.Length;
+			}
+			while ((j + 1) < k && oid[j] == '0') {
+				j ++;
+			}
+			if (sb.Length != 0) {
+				sb.Append('.');
+			}
+			sb.Append(oid.Substring(j, k - j));
+			j = k + 1;
+		}
+		return sb.ToString();
+	}
+
+	/*
+	 * Return the integer compoments of an OID. The source OID can
+	 * be a symbolic identifier for a well-known OID, or a numeric
+	 * identifier (decimal-dotted representation); in the latter case,
+	 * non-canonical representations are tolerated.
+	 *
+	 * If the source cannot be interpreted as a valid OID, then an
+	 * exception is returned. Since a valid OID contains at least
+	 * two components, the length of the returned array is at least 2.
+	 * This function also verifies that the first 2 components are
+	 * in an allowed range (i.e. the first component must be 0, 1 or 2,
+	 * and if the first component is 0 or 1, then the second component
+	 * must be less than 40).
+	 */
+	public static ZInt[] GetComponents(string oid)
+	{
+		if (!IsNumericOID(oid)) {
+			oid = ToOID(oid);
+		}
+		List<ZInt> r = new List<ZInt>();
+		int p = 0;
+		int n = oid.Length;
+		while (p < n) {
+			int q = oid.IndexOf('.', p);
+			if (q < 0) {
+				q = n;
+			}
+			r.Add(ZInt.Parse(oid.Substring(p, q - p)));
+			p = q + 1;
+		}
+		if (r[0] > 2 || (r[0] <= 1 && r[1] >= 40)) {
+			throw new AsnException("invalid OID (components out of range)");
+		}
+		return r.ToArray();
 	}
 }
 

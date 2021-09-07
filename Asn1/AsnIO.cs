@@ -5,13 +5,26 @@ using System.Text;
 
 namespace Asn1 {
 
+/*
+ * Some static helper methods to handle ASN.1-related I/O operations
+ * (in particular detecting and decoding Base64 and PEM layers).
+ */
+
 public static class AsnIO {
 
+	/*
+	 * Alias for FindBER(buf, true) (i.e. finding an encoded object
+	 * with a definite length).
+	 */
 	public static byte[] FindDER(byte[] buf)
 	{
 		return FindBER(buf, true);
 	}
 
+	/*
+	 * Alias for FindBER(buf, false) (i.e. finding an encoded object,
+	 * possibly with an indefinite length).
+	 */
 	public static byte[] FindBER(byte[] buf)
 	{
 		return FindBER(buf, false);

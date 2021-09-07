@@ -9,6 +9,6 @@ fi
 
 set -e
 echo "DDer..."
-$CSC /out:DDer.exe /main:DDer DDer/*.cs Asn1/*.cs
+$CSC /out:DDer.exe /main:DDerCLI CLI/DDerCLI.cs Asn1/*.cs BigInt/*.cs
 echo "MDer..."
-$CSC /out:MDer.exe /main:MDer MDer/*.cs Asn1/*.cs ZInt/*.cs
+$CSC /out:MDer.exe /main:MDerCLI CLI/MDerCLI.cs Asn1/*.cs BigInt/*.cs

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
+using BigInt;
+
 namespace Asn1 {
 
 /*
@@ -10,7 +12,7 @@ namespace Asn1 {
  * immutable.
  */
 
-public class AsnElt {
+public class AsnElt : IAsn1 {
 
 	/*
 	 * Universal tag values.
@@ -815,6 +817,18 @@ public class AsnElt {
 	}
 
 	/*
+	 * Interpret the value as an INTEGER.
+	 */
+	public ZInt GetLargeInteger()
+	{
+		if (Constructed) {
+			throw new AsnException(
+				"invalid INTEGER (constructed)");
+		}
+		return ZInt.DecodeSignedBE(objBuf, valOff, valLen);
+	}
+
+	/*
 	 * Interpret the value as an INTEGER. An exception is thrown if
 	 * the value does not fit in a 'long'.
 	 */
@@ -866,10 +880,44 @@ public class AsnElt {
 	}
 
 	/*
+	 * Interpret the value as an INTEGER and return its minimal signed
+	 * binary representation (big endian, at least one byte, top bit
+	 * of the first byte is the sign bit). Extraneous leading bytes
+	 * (bytes of value 0x00 or 0xFF, which are redundant with the sign
+	 * bit) are removed. If the integer has value zero, then a single
+	 * byte of value 0x00 is returned.
+	 */
+	public byte[] GetIntegerBytes()
+	{
+		if (Constructed) {
+			throw new AsnException(
+				"invalid INTEGER (constructed)");
+		}
+		int vlen = ValueLength;
+		if (vlen == 0) {
+			throw new AsnException("invalid INTEGER (length = 0)");
+		}
+		byte[] tmp = CopyValue();
+		int i = 0;
+		while ((i + 1) < tmp.Length
+			&& ((tmp[i] == 0 && tmp[i + 1] < 0x80)
+			|| (tmp[i] == 0xFF && tmp[i + 1] >= 0x80)))
+		{
+			i ++;
+		}
+		if (i != 0) {
+			byte[] tmp2 = new byte[tmp.Length - i];
+			Array.Copy(tmp, i, tmp2, 0, tmp2.Length);
+			tmp = tmp2;
+		}
+		return tmp;
+	}
+
+	/*
 	 * Interpret the value as an INTEGER. Return its hexadecimal
 	 * representation (uppercase), preceded by a '0x' or '-0x'
 	 * header, depending on the integer sign. The number of
-	 * hexadecimal digits is even. Leading zeroes are returned (but
+	 * hexadecimal digits is even. Leading zeroes are removed (but
 	 * one may remain, to ensure an even number of digits). If the
 	 * integer has value 0, then 0x00 is returned.
 	 */
@@ -1013,27 +1061,27 @@ public class AsnElt {
 		if (valLen == 0) {
 			throw new AsnException("zero-length OID");
 		}
-		int v = objBuf[valOff];
-		if (v >= 120) {
-			throw new AsnException(
-				"invalid OID: first byte = " + v);
-		}
 		StringBuilder sb = new StringBuilder();
-		sb.Append(v / 40);
-		sb.Append('.');
-		sb.Append(v % 40);
-		long acc = 0;
+		ZInt acc = 0;
 		bool uv = false;
-		for (int i = 1; i < valLen; i ++) {
-			v = objBuf[valOff + i];
-			if ((acc >> 56) != 0) {
-				throw new AsnException(
-					"invalid OID: integer overflow");
-			}
-			acc = (acc << 7) + (long)(v & 0x7F);
+		for (int i = 0; i < valLen; i ++) {
+			int v = objBuf[valOff + i];
+			acc = (acc << 7) + (v & 0x7F);
 			if ((v & 0x80) == 0) {
-				sb.Append('.');
-				sb.Append(acc);
+				if (sb.Length == 0) {
+					if (acc < 80) {
+						int a = acc.ToInt;
+						sb.Append(a / 40);
+						sb.Append('.');
+						sb.Append(a % 40);
+					} else {
+						sb.Append("2.");
+						sb.Append(acc - 80);
+					}
+				} else {
+					sb.Append('.');
+					sb.Append(acc);
+				}
 				acc = 0;
 				uv = false;
 			} else {
@@ -1065,10 +1113,11 @@ public class AsnElt {
 	 * Get the object value as a string. The string type is provided
 	 * (universal tag value). Supported string types include
 	 * NumericString, PrintableString, IA5String, TeletexString
-	 * (interpreted as ISO-8859-1), UTF8String, BMPString and
-	 * UniversalString; the "time types" (UTCTime and GeneralizedTime)
-	 * are also supported, though, in their case, the internal
-	 * contents are not checked (they are decoded as PrintableString).
+	 * (interpreted as ISO-8859-1), GeneralString (interpreted as
+	 * ISO-8859-1), UTF8String, BMPString and UniversalString; the
+	 * "time types" (UTCTime and GeneralizedTime) are also
+	 * supported, though, in their case, the internal contents are
+	 * not checked (they are decoded as PrintableString).
 	 */
 	public string GetString(int type)
 	{
@@ -1081,6 +1130,7 @@ public class AsnElt {
 		case PrintableString:
 		case IA5String:
 		case TeletexString:
+		case GeneralString:
 		case UTCTime:
 		case GeneralizedTime:
 			return DecodeMono(objBuf, valOff, valLen, type);
@@ -1316,6 +1366,13 @@ public class AsnElt {
 				}
 			}
 			return;
+		case GeneralString:
+			foreach (char c in tc) {
+				if (!IsLatin1(c)) {
+					throw BadChar(c, type);
+				}
+			}
+			return;
 		}
 
 		/*
@@ -1457,7 +1514,7 @@ public class AsnElt {
 		 * Some other notes:
 		 * -- If there is a fractional second, then it must include
 		 * at least one digit. This implementation processes the
-		 * first three digits, and ignores the rest (if present).
+		 * first seven digits, and ignores the rest (if present).
 		 * -- Time zone offset ranges from -23:59 to +23:59.
 		 * -- The calendar computations are delegated to .NET's
 		 * DateTime (and DateTimeOffset) so this implements a
@@ -1542,7 +1599,7 @@ public class AsnElt {
 		int hour = Dec2(s, 4, ref good);
 		int minute = Dec2(s, 6, ref good);
 		int second = 0;
-		int millisecond = 0;
+		int fracticks = 0;
 		if (isGen) {
 			second = Dec2(s, 8, ref good);
 			if (s.Length >= 12 && s[10] == '.') {
@@ -1553,9 +1610,12 @@ public class AsnElt {
 						break;
 					}
 				}
-				s += "0000";
-				millisecond = 10 * Dec2(s, 0, ref good)
-					+ Dec2(s, 2, ref good) / 10;
+				s += "00000000";
+				fracticks = 1000000 * Dec2(s, 0, ref good)
+					+ 10000 * Dec2(s, 2, ref good)
+					+ 100 * Dec2(s, 4, ref good)
+					+ Dec2(s, 6, ref good);
+				fracticks /= 10;
 			} else if (s.Length != 10) {
 				good = false;
 			}
@@ -1593,20 +1653,28 @@ public class AsnElt {
 		 * proleptic Gregorian calendar).
 		 */
 		try {
+			DateTime dt;
 			if (noTZ) {
-				DateTime dt = new DateTime(year, month, day,
-					hour, minute, second, millisecond,
+				dt = new DateTime(year, month, day,
+					hour, minute, second,
 					DateTimeKind.Local);
-				return dt.ToUniversalTime();
+				dt = dt.ToUniversalTime();
+			} else {
+				TimeSpan tzOff = new TimeSpan(
+					tzHours, tzMinutes, 0);
+				if (negZ) {
+					tzOff = tzOff.Negate();
+				}
+				DateTimeOffset dto = new DateTimeOffset(
+					year, month, day, hour, minute, second,
+					tzOff);
+				dt = dto.UtcDateTime;
 			}
-			TimeSpan tzOff = new TimeSpan(tzHours, tzMinutes, 0);
-			if (negZ) {
-				tzOff = tzOff.Negate();
+			if (fracticks != 0) {
+				dt = new DateTime(dt.Ticks + fracticks,
+					DateTimeKind.Utc);
 			}
-			DateTimeOffset dto = new DateTimeOffset(
-				year, month, day, hour, minute, second,
-				millisecond, tzOff);
-			return dto.UtcDateTime;
+			return dt;
 		} catch (Exception e) {
 			throw BadTime(type, orig, e);
 		}
@@ -1732,6 +1800,14 @@ public class AsnElt {
 		a.TagValue = tagValue;
 		a.Sub = null;
 		return a;
+	}
+
+	/*
+	 * Create a new INTEGER value for the provided integer.
+	 */
+	public static AsnElt MakeInteger(ZInt x)
+	{
+		return MakePrimitiveInner(INTEGER, x.ToBytesBE());
 	}
 
 	/*
@@ -1980,6 +2056,62 @@ public class AsnElt {
 	}
 
 	/*
+	 * Create a SET with DER rules: sub-elements are automatically
+	 * sorted by tag class and value. If two elements have the same
+	 * tag class and value, then an exception is thrown.
+	 */
+	public static AsnElt MakeSetDER(params AsnElt[] subs)
+	{
+		AsnElt a = new AsnElt();
+		a.objBuf = null;
+		a.objOff = 0;
+		a.objLen = -1;
+		a.valOff = 0;
+		a.valLen = -1;
+		a.hasEncodedHeader = false;
+		a.TagClass = UNIVERSAL;
+		a.TagValue = SET;
+		if (subs == null) {
+			a.Sub = new AsnElt[0];
+		} else {
+			SortedSet<AsnElt> s = new SortedSet<AsnElt>(
+				COMPARER_TAG);
+			foreach (AsnElt ax in subs) {
+				if (!s.Add(ax)) {
+					throw new AsnException(
+						"duplicate tag in SET: "
+						+ ax.TagString);
+				}
+			}
+			AsnElt[] tmp = new AsnElt[s.Count];
+			int j = 0;
+			foreach (AsnElt ax in s) {
+				tmp[j ++] = ax;
+			}
+			a.Sub = tmp;
+		}
+		return a;
+	}
+
+	static IComparer<AsnElt> COMPARER_TAG =
+		new ComparerTag();
+
+	class ComparerTag : IComparer<AsnElt> {
+
+		public int Compare(AsnElt ae1, AsnElt ae2)
+		{
+			int tc1 = ae1.TagClass;
+			int tc2 = ae2.TagClass;
+			if (tc1 != tc2) {
+				return tc1 - tc2;
+			}
+			int tv1 = ae1.TagValue;
+			int tv2 = ae2.TagValue;
+			return tv1 - tv2;
+		}
+	}
+
+	/*
 	 * Wrap an element into an explicit tag.
 	 */
 	public static AsnElt MakeExplicit(int tagClass, int tagValue, AsnElt x)
@@ -2015,6 +2147,15 @@ public class AsnElt {
 		return a;
 	}
 
+	/*
+	 * Apply an implicit CONTEXT tag to a value. The source AsnElt object
+	 * is unmodified; a new object is returned.
+	 */
+	public static AsnElt MakeImplicit(int tagValue, AsnElt x)
+	{
+		return MakeImplicit(CONTEXT, tagValue, x);
+	}
+
 	public static AsnElt NULL_V = AsnElt.MakePrimitive(
 		NULL, new byte[0]);
 
@@ -2025,10 +2166,41 @@ public class AsnElt {
 
 	/*
 	 * Create an OBJECT IDENTIFIER from its string representation.
-	 * This function tolerates extra leading zeros.
+	 * This function tolerates (and removes) extra leading zeros in
+	 * OID components. A symbolic name can be used (AsnOID.ToOID()
+	 * is used to perform the translation).
 	 */
 	public static AsnElt MakeOID(string str)
 	{
+		ZInt[] r = AsnOID.GetComponents(str);
+		MemoryStream ms = new MemoryStream();
+		for (int i = 0; i < r.Length; i ++) {
+			ZInt v;
+			if (i == 0) {
+				v = 40 * r[0] + r[1];
+			} else if (i == 1) {
+				continue;
+			} else {
+				v = r[i];
+			}
+			if (v.Sign == 0) {
+				ms.WriteByte((byte)0);
+				continue;
+			}
+			for (int k = (v.BitLength - 1) / 7; k >= 0; k --) {
+				int x = ((v >> (7 * k)) & 0x7F).ToInt;
+				if (k != 0) {
+					x |= 0x80;
+				}
+				ms.WriteByte((byte)x);
+			}
+		}
+		byte[] buf = ms.ToArray();
+		return MakePrimitiveInner(OBJECT_IDENTIFIER,
+			buf, 0, buf.Length);
+
+		/* obsolete
+		str = AsnOID.ToOID(str);
 		List<long> r = new List<long>();
 		int n = str.Length;
 		long x = -1;
@@ -2091,6 +2263,7 @@ public class AsnElt {
 		byte[] buf = ms.ToArray();
 		return MakePrimitiveInner(OBJECT_IDENTIFIER,
 			buf, 0, buf.Length);
+		*/
 	}
 
 	/*
@@ -2109,6 +2282,7 @@ public class AsnElt {
 		case GeneralizedTime:
 		case IA5String:
 		case TeletexString:
+		case GeneralString:
 			buf = EncodeMono(str);
 			break;
 		case UTF8String:
@@ -2285,6 +2459,12 @@ public class AsnElt {
 	public static AsnElt MakeTimeAuto(DateTimeOffset dto)
 	{
 		return MakeTimeAuto(dto.UtcDateTime);
+	}
+
+	/* see IAsn1.cs */
+	public virtual AsnElt ToAsn1()
+	{
+		return this;
 	}
 }
 

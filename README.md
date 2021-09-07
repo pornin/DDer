@@ -2,12 +2,57 @@
 
 ## Overview
 
-**DDer** is a simple command-line tool that converts encoded ASN.1
-object (DER or BER) to a structured text-based syntax that is
-reminiscent of Lisp (i.e. it uses parentheses). **MDer** performs the
-reverse operation. These tools are meant to allow easy analysis of
+This repository contains a generic ASN.1/DER parsing library, written
+in C#, that has the following features:
+
+  - Arbitrary ASN.1/DER object can be decoded into object instances that
+    can be explored programmatically.
+  - Such instances can also be built programmatically, and encoded.
+  - Decoding supports binary DER as well as Base64 and PEM.
+  - A text-based structure syntax can be used to describe values. The
+    syntax is supported as output (convert an object to a human-readable
+    text format), as input (convert a human-writable format into an
+    ASN.1 object that can be encoded), and as a parsing template
+    (exploring a decoded ASN.1 object, to check the presence of expected
+    structures and elements, and to gather values from elements).
+
+**DDer.exe** is a simple command-line tool that converts encoded ASN.1
+object (DER or BER) to the structured text-based syntax that is
+reminiscent of Lisp (i.e. it uses parentheses). **MDer.exe** performs
+the reverse operation. These tools are meant to allow easy analysis of
 DER-encoded objects (in particular X.509 certificates) and creation of
 synthetic objects from a text editor or a scripting environment.
+**MDer.exe** can additionally use parameters to insert sub-objects and
+elements at various places. The internal classes `DDer` and `MDer`
+provide programmatic access to these fonctionalities, in particular with
+powerful parametrization features to allow easier building and parsing
+of objects as used in some complicated ASN.1-based protocols (e.g.
+exploring X.509 certificate contents).
+
+**ZInt** is a self-contained big integer implementation, in pure C#.
+It is implemented in the [ZInt.cs](BigInt/ZInt.cs) file. This file
+defines the `ZInt` struct type, which can be used basically like plain
+integers thanks to operator overloads. It offers functionalities
+similar to that of `System.Numerics.BigInteger`, with the following
+differences:
+
+  - ZInt is much faster on small values: when the value would fit in a
+    signed 32-bit type (`int`), then ZInt use entails no dynamic
+    (GC-based) memory allocation. This makes ZInt more appropriate for
+    computations over integers that are usually small but may
+    occasionally exceed the range of `int`.
+
+  - ZInt also works on old C#/.NET (pre-4.0) that do not support
+    `System.Numerics.BigInteger`.
+
+  - ZInt has a few extra number-theoretic functions. In particular,
+    it can return the Bézout coefficients when computing a GCD;
+    it also includes primality tests, and random generation.
+
+ZInt is useful for some mathematics-related tasks, e.g. involving some
+kinds of cryptography, with the following important caveat: it is not
+constant-time, and thus MUST NOT be used to manipulate private data.
+ZInt is meant to support research tasks and prototyping.
 
 ## License
 
@@ -49,31 +94,51 @@ and `dmcs` to invoke the C# compiler.
 On Windows, the compiled `DDer.exe` and `MDer.exe` files can be launched
 directly. On Linux and OS X, use `mono DDer.exe` and `mono MDer.exe`.
 
-**DDer** expects one or several file names; in each file, a single ASN.1
+**DDer.exe** expects one or several file names; in each file, a single ASN.1
 object will be decoded. Files may contain the raw object (in binary), a
 Base64-encoded object, or a PEM object (Base64-encoding with the
 `-----BEGIN XXX-----` and `-----END XXX-----` headers). Object type is
 automatically detected. Decoded format is written on standard output, so
-use a shell redirection to store it in a file.
+use a shell redirection to store it in a file. If no file name is provided,
+then standard input is used.
 
 A file name given as "`-`" (a single minus character) designates
-standard input. Since DDer reads each input source as a whole, the "`-`"
-source can be given only once on the command-line.
+standard input. Since DDer.exe reads each input source as a whole, the
+"`-`" source can be given only once on the command-line.
 
-The `-n` command-line option forces DDer to produce numerical output for
-all OID. Without that option, DDer will recognize some standard OID and
+The `-n` command-line option forces DDer.exe to produce numerical output for
+all OIDs. Without that option, DDer.exe will recognize some standard OIDs and
 provide their name (e.g. if the OID is 2.5.29.15, DDer will print its
 symbolic name `id-ce-keyUsage`).
 
-**MDer** expects exactly two arguments: first one is the name of the
-source file (text encoding of the value), second one is the name of the
-output file to produce. Output is always binary DER (no Base64). If the
-name of the input file is "`-`" (a single minus character), then the
-source text is read from standard input. Similarly, if the output file
-name is "`-`", then the encoded DER object will be written on standard
-output (as binary).
+The `-i pref` command-line option makes DDer.exe use the string provided
+as the `pref` parameter for each indentation level; normally, `pref`
+will consist of one or several spaces. Default indentation prefix is
+four spaces. If `pref` is set to `none`, then no indentation is used,
+and newlines are suppressed (the output will fit on a single line of
+text).
+
+**MDer.exe** expects two arguments: first one is the name of the source
+file (text encoding of the value), second one is the name of the output
+file to produce. Output is always binary DER (no Base64). If the name of
+the input file is "`-`" (a single minus character), then the source text
+is read from standard input. Similarly, if the output file name is
+"`-`", then the encoded DER object will be written on standard output
+(as binary).
+
+Extra arguments to `MDer.exe` are extra values that can be inserted in
+the output object by using parameter references such as `%0`, `%1`...
+See the [`MDer` class](MDer/MDer.cs) for details. The command-line tool
+can only use string parameters; the `MDer` class gives programmatic
+access to parameterized object building which can use constructed
+objects.
 
 ## Syntax
+
+We describe here the base text syntax, as is produced by DDer.exe and
+expected by MDer.exe. This does not cover use of parameters for
+programmatic building or parsing; see the [`MDer` class](MDer/MDer.cs)
+for details.
 
 Text format consists in tokens, with the following rules:
 
@@ -308,6 +373,15 @@ commonly encountered in certificates for encoding URL (the format for
 such an URL is an `IA5String` with a contextual tag override of value 6,
 so the fact that it is an `IA5String` is not known to DDer).
 
+### GeneralString and TeletexString
+
+The ASN.1 `GeneralString` and `TeletexString` types are handled as
+ISO-8859-1, aka "Latin-1", i.e. as sequences of characters with a
+one-byte-per-character mapping. This does not conform to the _de jure_
+ASN.1 standard, but aligns with common practice in protocols that
+use such types. In any case, this allows reading and writing arbitrary
+string contents through `\x` escape sequences in string literals.
+
 ### Date and Time Processing
 
 When decoding a time string (`UTCTime` or `GeneralizedTime`), DDer
@@ -317,14 +391,14 @@ readable date and time in a brace-delimited comment. Note that a
 
  - The date is converted to UTC. Any time zone offset in the string is
    processed and applied.
- - In `GeneralizedTime` values, only up to three fractional digits are
-   read (i.e. millisecons); other digits are ignored.
+ - In `GeneralizedTime` values, only up to seven fractional digits are
+   read (i.e. 'ticks' of 100ns); other digits are ignored.
  - Year 0 is not supported (`DateTime` starts at year 1).
  - The calendar is a "proleptic Gregorian calendar", which means that
    the Gregorian rules, theoretically valid only from October 15th, 1589 AD
    onwards, are retroactively applied to previous dates.
  - Leap seconds are ignored: if the second count is 60, it is internally
-   converted to 59. Not attempt is made to check if the leap second
+   converted to 59. No attempt is made to check whether the leap second
    really occurred, or even _might_ have occurred at that date, as per
    UTC rules.
 
@@ -380,13 +454,16 @@ but are still unambiguous. These variants include the following:
 
 DDer and MDer operate under the following constraints:
 
- - The complete ASN.1 object must fit in RAM. Processing is not streamed.
-   Moreover, 32-bit integers are used for lengths, so total object length
-   may not exceed 2 gigabytes.
+ - The complete ASN.1 object must fit in RAM. Processing is not
+   streamed. Moreover, 32-bit signed integers are used for lengths, so
+   total object length may not exceed 2 gigabytes.
 
  - Tag value must fit on a 32-bit signed integer.
 
- - Individual OID components must fit on 64-bit signed integers.
+ - Individual OID components can have arbitrary size; be aware that many
+   other existing ASN.1 libraries cannot handle components beyond 32 bits
+   or so, therefore larger components should be avoided for better
+   interoperability.
 
  - Dates must have year 1 to 9999. Year 0 is not supported.
 
