@@ -128,7 +128,7 @@ is read from standard input. Similarly, if the output file name is
 
 Extra arguments to `MDer.exe` are extra values that can be inserted in
 the output object by using parameter references such as `%0`, `%1`...
-See the [`MDer` class](MDer/MDer.cs) for details. The command-line tool
+See the [`MDer` class](Asn1/MDer.cs) for details. The command-line tool
 can only use string parameters; the `MDer` class gives programmatic
 access to parameterized object building which can use constructed
 objects.
@@ -137,7 +137,7 @@ objects.
 
 We describe here the base text syntax, as is produced by DDer.exe and
 expected by MDer.exe. This does not cover use of parameters for
-programmatic building or parsing; see the [`MDer` class](MDer/MDer.cs)
+programmatic building or parsing; see the [`MDer` class](Asn1/MDer.cs)
 for details.
 
 Text format consists in tokens, with the following rules:
